@@ -1,0 +1,80 @@
+#include <WiFi.h>
+#include "esp_wifi.h"
+
+static const int RED_LED_PIN = 2;
+static const int GREEN_LED_PIN = 13;
+
+// Time (milliseconds) to keep the red LED on after a deauth detection
+static const unsigned long DEAUTH_LED_DURATION = 500;
+
+// Track the last time we detected a deauth
+volatile unsigned long lastDeauthTime = 0;
+// Flag to indicate we just saw a deauth
+volatile bool deauthDetected = false;
+
+// Promiscuous callback
+void IRAM_ATTR packetHandler(void* buf, wifi_promiscuous_pkt_type_t type) {
+    wifi_promiscuous_pkt_t* packet = (wifi_promiscuous_pkt_t*)buf;
+    // Always check that packet->payload is valid and within expected size
+    // ...
+    uint8_t* payload = packet->payload;
+
+    // Check if the packet is a deauth frame
+    if (payload[0] == 0xC0) { // or do a more precise subtype check
+        // Record deauth event
+        lastDeauthTime = millis();
+        deauthDetected = true;
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+
+    // Setup LEDs
+    pinMode(RED_LED_PIN, OUTPUT);
+    pinMode(GREEN_LED_PIN, OUTPUT);
+    digitalWrite(RED_LED_PIN, LOW);
+    digitalWrite(GREEN_LED_PIN, HIGH);
+
+    // Wi-Fi init
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&cfg) != ESP_OK) {
+        Serial.println("Wi-Fi init failed");
+        // handle error
+    }
+
+    // Set promiscuous filter
+    wifi_promiscuous_filter_t filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT
+    };
+    esp_wifi_set_promiscuous_filter(&filter);
+
+    // Register callback
+    esp_wifi_set_promiscuous_rx_cb(&packetHandler);
+
+    // Enable promiscuous mode
+    esp_wifi_set_promiscuous(true);
+}
+
+void loop() {
+    // If a deauth was detected recently, turn Red LED on briefly
+    if (deauthDetected) {
+        digitalWrite(RED_LED_PIN, HIGH);
+        digitalWrite(GREEN_LED_PIN, LOW);
+        Serial.println("Deauthentication detected!");
+
+
+        // If enough time has passed, reset
+        if (millis() - lastDeauthTime > DEAUTH_LED_DURATION) {
+            // Turn off Red LED, turn on Green LED
+            digitalWrite(RED_LED_PIN, LOW);
+            digitalWrite(GREEN_LED_PIN, HIGH);
+
+            // Reset the flag
+            deauthDetected = false;
+        }
+    }
+}
